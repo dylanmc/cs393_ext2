@@ -7,6 +7,7 @@ use null_terminated::NulStr;
 use uuid::Uuid;
 use zerocopy::ByteSlice;
 use std::fmt;
+use std::sync::Arc;
 use rustyline::{DefaultEditor, Result};
 
 #[repr(C)]
@@ -118,13 +119,13 @@ impl Ext2 {
         let entry_ptr = self.blocks[root.direct_pointer[0] as usize - self.block_offset].as_ptr();
         let mut byte_offset: isize = 0;
         while byte_offset < root.size_low as isize { // <- todo, support large directories
-            let directory = unsafe {
-                &*(entry_ptr.offset(byte_offset) as *const DirectoryEntry)
+            let directory = unsafe { 
+                &*(entry_ptr.offset(byte_offset) as *const DirectoryEntry) 
             };
             // println!("{:?}", directory);
             byte_offset += directory.entry_size as isize;
             ret.push((directory.inode as usize, &directory.name));
-        }
+        } 
         Ok(ret)
     }
 }
@@ -153,6 +154,7 @@ fn main() -> Result<()> {
 
     let mut rl = DefaultEditor::new()?;
     loop {
+        // fetch the children of the current working directory
         let dirs = match ext2.read_dir_inode(current_working_inode) {
             Ok(dir_listing) => {
                 dir_listing
@@ -166,20 +168,27 @@ fn main() -> Result<()> {
         let buffer = rl.readline(":> ");
         if let Ok(line) = buffer {
             if line.starts_with("ls") {
-                // TODO: support arguments to ls
+                // `ls` prints our cwd's children
+                // TODO: support arguments to ls (print that directory's children instead)
                 for dir in &dirs {
                     print!("{}\t", dir.1);
                 }
-                println!();
+                println!();    
             } else if line.starts_with("cd") {
+                // `cd` with no arguments, cd goes back to root
+                // `cd dir_name` moves cwd to that directory
                 let elts: Vec<&str> = line.split(' ').collect();
                 if elts.len() == 1 {
                     current_working_inode = 2;
                 } else {
+                    // TODO: if the argument is a path, follow the path
+                    // e.g., cd dir_1/dir_2 should move you down 2 directories
+                    // deeper into dir_2
                     let to_dir = elts[1];
                     let mut found = false;
                     for dir in &dirs {
                         if dir.1.to_string().eq(to_dir) {
+                            // TODO: maybe don't just assume this is a directory
                             found = true;
                             current_working_inode = dir.0;
                         }
@@ -188,6 +197,30 @@ fn main() -> Result<()> {
                         println!("unable to locate {}, cwd unchanged", to_dir);
                     }
                 }
+            } else if line.starts_with("mkdir") {
+                // `mkdir childname`
+                // create a directory with the given name, add a link to cwd
+                // consider supporting `-p path/to_file` to create a path of directories
+                println!("mkdir not yet implemented");
+            } else if line.starts_with("cat") {
+                // `cat filename`
+                // print the contents of filename to stdout
+                // if it's a directory, print a nice error
+                println!("cat not yet implemented");
+            } else if line.starts_with("rm") {
+                // `rm target`
+                // unlink a file or empty directory
+                println!("rm not yet implemented");
+            } else if line.starts_with("mount") {
+                // `mount host_filename mountpoint`
+                // mount an ext2 filesystem over an existing empty directory
+                println!("mount not yet implemented");
+            } else if line.starts_with("link") {
+                // `link arg_1 arg_2`
+                // create a hard link from arg_1 to arg_2
+                // consider what to do if arg2 does- or does-not end in "/"
+                // and/or if arg2 is an existing directory name
+                println!("link not yet implemented");
             } else if line.starts_with("quit") || line.starts_with("exit") {
                 break;
             }
