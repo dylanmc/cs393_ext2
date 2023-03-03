@@ -7,7 +7,6 @@ use null_terminated::NulStr;
 use uuid::Uuid;
 use zerocopy::ByteSlice;
 use std::fmt;
-use std::sync::Arc;
 use rustyline::{DefaultEditor, Result};
 
 #[repr(C)]
@@ -119,13 +118,13 @@ impl Ext2 {
         let entry_ptr = self.blocks[root.direct_pointer[0] as usize - self.block_offset].as_ptr();
         let mut byte_offset: isize = 0;
         while byte_offset < root.size_low as isize { // <- todo, support large directories
-            let directory = unsafe { 
-                &*(entry_ptr.offset(byte_offset) as *const DirectoryEntry) 
+            let directory = unsafe {
+                &*(entry_ptr.offset(byte_offset) as *const DirectoryEntry)
             };
             // println!("{:?}", directory);
             byte_offset += directory.entry_size as isize;
             ret.push((directory.inode as usize, &directory.name));
-        } 
+        }
         Ok(ret)
     }
 }
@@ -171,9 +170,9 @@ fn main() -> Result<()> {
                 for dir in &dirs {
                     print!("{}\t", dir.1);
                 }
-                println!("");    
+                println!();
             } else if line.starts_with("cd") {
-                let elts: Vec<&str> = line.split(" ").collect();
+                let elts: Vec<&str> = line.split(' ').collect();
                 if elts.len() == 1 {
                     current_working_inode = 2;
                 } else {
