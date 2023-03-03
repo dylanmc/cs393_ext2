@@ -6,6 +6,21 @@ do for now are the `ls`, and `cd` commands.
 It's left as an exercise to implement `cat` to view the contents of files,
 and removing other limitationsS:
 
+```
+:> ls
+.	..	lost+found	test_directory	hello.txt	
+:> cat hello.txt
+cat not yet implemented
+:> cd test_directory
+:> ls
+.	..	file_in_folder.txt	
+:> cd file_in_folder.txt    # <- whoops
+:> ls
+'m a file inside a folder.  # <- whoops^2
+	
+:> 
+```
+
 Limitations (also possible exercises):
 
  - see "TODO" in `cd` command - you can currently `cd` into a text

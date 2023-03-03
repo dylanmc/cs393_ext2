@@ -7,7 +7,6 @@ use null_terminated::NulStr;
 use uuid::Uuid;
 use zerocopy::ByteSlice;
 use std::fmt;
-use std::sync::Arc;
 use rustyline::{DefaultEditor, Result};
 
 #[repr(C)]
