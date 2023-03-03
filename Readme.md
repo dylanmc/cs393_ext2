@@ -1,11 +1,10 @@
 
 This is a starting point for parsing and navigating ext2 file systems.
 `cargo run` will start a session that looks like a shell. All you can
-do to start is `mount <filename>`, where filename is a local file that
-has an ext2 filesystem on it.
+do for now are the `ls`, and `cd` commands.
 
-Once you've done that, you can use `ls`, and `cd` commands.
-Left as an exercise, implement `cat` to view the contents of files.
+It's left as an exercise to implement `cat` to view the contents of files,
+and removing other limitationsS:
 
 Limitations (also possible exercises):
 
@@ -25,6 +24,8 @@ Limitations (also possible exercises):
    writes modifications back to the "device" (file)
  - implement `import` to get a file from the "host" filesystem into
    ours
+ - implement a `mount <dirname>` command to mount a local file as an ext2
+   filesystem over an empty directory.
 
 
 Big projects:
