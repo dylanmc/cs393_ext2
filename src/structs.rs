@@ -1,5 +1,6 @@
 use bitflags::bitflags;
 use null_terminated::NulStr;
+use std::fmt;
 
 #[repr(C)]
 #[derive(Debug)]
@@ -208,6 +209,21 @@ pub enum TypeIndicator {
     Fifo,
     Socket,
     Symlink,
+}
+
+impl fmt::Display for TypeIndicator {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            TypeIndicator::Unknown => write!(f, "Unknown"),
+            TypeIndicator::Regular => write!(f, "Regular"),
+            TypeIndicator::Directory => write!(f, "Directory"),
+            TypeIndicator::Character => write!(f, "Character"),
+            TypeIndicator::Block => write!(f, "Block"),
+            TypeIndicator::Fifo => write!(f, "Fifo"),
+            TypeIndicator::Socket => write!(f, "Socket"),
+            TypeIndicator::Symlink => write!(f, "Symlink"),
+        }
+    }
 }
 
 bitflags! {
