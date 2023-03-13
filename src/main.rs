@@ -218,7 +218,27 @@ fn main() -> Result<()> {
                 // `cat filename`
                 // print the contents of filename to stdout
                 // if it's a directory, print a nice error
-                println!("cat not yet implemented");
+                let elts: Vec<&str> = line.split(' ').collect();
+                let file_to_read = elts[1];
+                let mut found = false;
+                for dir in &dirs {
+                    if dir.1.to_string().eq(file_to_read) && dir.2.to_string() == "Regular" {
+                        found = true;
+                        // fetch the children of the file inode (its content)
+                        let contents = match ext2.read_dir_inode(dir.0) {
+                            Ok(dir_listing) => dir_listing,
+                            Err(_) => {
+                                println!("unable to read cwd");
+                                break;
+                            }
+                        };
+                        println!("{}\t", contents[0].1);
+                        break;
+                    }
+                }
+                if !found {
+                    println!("unable to locate {}", file_to_read);
+                }
             } else if line.starts_with("rm") {
                 // `rm target`
                 // unlink a file or empty directory
