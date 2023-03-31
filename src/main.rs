@@ -2,12 +2,12 @@
 
 mod structs;
 use crate::structs::{BlockGroupDescriptor, DirectoryEntry, Inode, Superblock};
-use std::mem;
 use null_terminated::NulStr;
+use rustyline::{DefaultEditor, Result};
+use std::fmt;
+use std::mem;
 use uuid::Uuid;
 use zerocopy::ByteSlice;
-use std::fmt;
-use rustyline::{DefaultEditor, Result};
 
 #[repr(C)]
 #[derive(Debug)]
@@ -95,12 +95,12 @@ impl Ext2 {
         let index: usize = (inode - 1) % self.superblock.inodes_per_group as usize;
 
         // println!("in get_inode, inode num = {}, index = {}, group = {}", inode, index, group);
-        let inode_table_block = (self.block_groups[group].inode_table_block) as usize - self.block_offset;
+        let inode_table_block =
+            (self.block_groups[group].inode_table_block) as usize - self.block_offset;
         // println!("in get_inode, block number of inode table {}", inode_table_block);
         let inode_table = unsafe {
             std::slice::from_raw_parts(
-                self.blocks[inode_table_block].as_ptr()
-                    as *const Inode,
+                self.blocks[inode_table_block].as_ptr() as *const Inode,
                 self.superblock.inodes_per_group as usize,
             )
         };
@@ -117,29 +117,28 @@ impl Ext2 {
         // println!("following direct pointer to data block: {}", root.direct_pointer[0]);
         let entry_ptr = self.blocks[root.direct_pointer[0] as usize - self.block_offset].as_ptr();
         let mut byte_offset: isize = 0;
-        while byte_offset < root.size_low as isize { // <- todo, support large directories
-            let directory = unsafe { 
-                &*(entry_ptr.offset(byte_offset) as *const DirectoryEntry) 
-            };
+        while byte_offset < root.size_low as isize {
+            // <- todo, support large directories
+            let directory = unsafe { &*(entry_ptr.offset(byte_offset) as *const DirectoryEntry) };
             // println!("{:?}", directory);
             byte_offset += directory.entry_size as isize;
             ret.push((directory.inode as usize, &directory.name));
-        } 
+        }
         Ok(ret)
     }
 }
 
-impl fmt::Debug for Inode<> {
+impl fmt::Debug for Inode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.size_low == 0 && self.size_high == 0 {
             f.debug_struct("").finish()
         } else {
             f.debug_struct("Inode")
-            .field("type_perm", &self.type_perm)
-            .field("size_low", &self.size_low)
-            .field("direct_pointers", &self.direct_pointer)
-            .field("indirect_pointer", &self.indirect_pointer)
-            .finish()
+                .field("type_perm", &self.type_perm)
+                .field("size_low", &self.size_low)
+                .field("direct_pointers", &self.direct_pointer)
+                .field("indirect_pointer", &self.indirect_pointer)
+                .finish()
         }
     }
 }
@@ -149,15 +148,15 @@ fn main() -> Result<()> {
     let start_addr: usize = disk.as_ptr() as usize;
     let ext2 = Ext2::new(&disk[..], start_addr);
 
-    let mut current_working_inode:usize = 2;
+    let mut current_working_inode: usize = 2; // 2 is the root inode
 
     let mut rl = DefaultEditor::new()?;
     loop {
         // fetch the children of the current working directory
         let dirs = match ext2.read_dir_inode(current_working_inode) {
             Ok(dir_listing) => {
-                dir_listing
-            },
+                dir_listing // the result is a vector of (inode, name) tuples
+            }
             Err(_) => {
                 println!("unable to read cwd");
                 break;
@@ -170,14 +169,15 @@ fn main() -> Result<()> {
                 // `ls` prints our cwd's children
                 // TODO: support arguments to ls (print that directory's children instead)
                 for dir in &dirs {
-                    print!("{}\t", dir.1);
+                    print!("{}\t", dir.1); //dir.1 is the name of the directory
                 }
-                println!();    
+                println!();
             } else if line.starts_with("cd") {
                 // `cd` with no arguments, cd goes back to root
                 // `cd dir_name` moves cwd to that directory
                 let elts: Vec<&str> = line.split(' ').collect();
                 if elts.len() == 1 {
+                    // go back to root
                     current_working_inode = 2;
                 } else {
                     // TODO: if the argument is a path, follow the path
@@ -188,8 +188,15 @@ fn main() -> Result<()> {
                     for dir in &dirs {
                         if dir.1.to_string().eq(to_dir) {
                             // TODO: maybe don't just assume this is a directory
-                            found = true;
-                            current_working_inode = dir.0;
+                            // if the inode is not a dir, print an error
+                            if (ext2.get_inode(dir.0).type_perm & structs::TypePerm::DIRECTORY)
+                                == structs::TypePerm::DIRECTORY
+                            {
+                                found = true;
+                                current_working_inode = dir.0;
+                            } else {
+                                println!("cd: not a directory: {}", dir.1);
+                            }
                         }
                     }
                     if !found {
