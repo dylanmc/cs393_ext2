@@ -25,8 +25,7 @@ cat not yet implemented
 
 Limitations (also possible exercises):
 
- - see "TODO" in `cd` command - you can currently `cd` into a text
-   file - whoops!
+ - ~~see "TODO" in `cd` command - you can currently `cd` into a text file - whoops!~~
  - implement `cat` command to view text files
  - currently it only parses small directories, remove this limitation
  - implement `mkdir`
