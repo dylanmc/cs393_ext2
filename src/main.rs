@@ -2,6 +2,7 @@
 
 mod structs;
 use crate::structs::{BlockGroupDescriptor, DirectoryEntry, Inode, Superblock};
+use null_terminated::Nul;
 use null_terminated::NulStr;
 use rustyline::{DefaultEditor, Result};
 use std::fmt;
@@ -110,6 +111,7 @@ impl Ext2 {
         &inode_table[index]
     }
 
+    // given a (1-indexed) inode number, return a list of (inode, name) pairs
     pub fn read_dir_inode(&self, inode: usize) -> std::io::Result<Vec<(usize, &NulStr)>> {
         let mut ret = Vec::new();
         let root = self.get_inode(inode);
@@ -125,6 +127,11 @@ impl Ext2 {
             ret.push((directory.inode as usize, &directory.name));
         }
         Ok(ret)
+    }
+
+    // given a (1-indexed) inode number, return the contents of that file
+    pub fn read_file_inode(&self, inode: usize) -> std::io::Result<&NulStr> {
+        let root = self.get_inode(inode);
     }
 }
 
@@ -212,6 +219,44 @@ fn main() -> Result<()> {
                 // `cat filename`
                 // print the contents of filename to stdout
                 // if it's a directory, print a nice error
+                // get the arguments
+                let elts: Vec<&str> = line.split(' ').collect();
+                if elts.len() != 2 {
+                    println!("usage: cat filename");
+                    continue;
+                }
+                let filename = elts[1];
+                // check if the file exists
+                let mut found = false;
+                for dir in &dirs {
+                    // if the file exists, print it
+                    if dir.1.to_string().eq(filename) {
+                        found = !found;
+                        let inode = ext2.get_inode(dir.0);
+                        // if the inode is a directory, print an error
+                        if (inode.type_perm & structs::TypePerm::DIRECTORY)
+                            == structs::TypePerm::DIRECTORY
+                        {
+                            println!("cat: {}: Is a directory", filename);
+                        } else {
+                            // print the contents of the file
+                            let content = ext2.read_file_inode(dir.0);
+                            match content {
+                                Ok(content) => {
+                                    println!("{}", content);
+                                }
+                                Err(_) => {
+                                    println!("cat: {}: No such file or directory", filename);
+                                }
+                                
+                            }
+                        }
+                    }
+                }
+                // if not found, print an error
+                if !found {
+                    println!("cat: {}: No such file or directory", filename);
+                }
                 println!("cat not yet implemented");
             } else if line.starts_with("rm") {
                 // `rm target`
