@@ -117,6 +117,7 @@ impl Ext2 {
         let root = self.get_inode(inode);
         // println!("in read_dir_inode, #{} : {:?}", inode, root);
         // println!("following direct pointer to data block: {}", root.direct_pointer[0]);
+        // entry_ptr is a pointer to the first entry in the directory
         let entry_ptr = self.blocks[root.direct_pointer[0] as usize - self.block_offset].as_ptr();
         let mut byte_offset: isize = 0;
         while byte_offset < root.size_low as isize {
@@ -130,8 +131,24 @@ impl Ext2 {
     }
 
     // given a (1-indexed) inode number, return the contents of that file
-    pub fn read_file_inode(&self, inode: usize) -> std::io::Result<&NulStr> {
+    pub fn read_file_inode(&self, inode: usize) -> std::io::Result<Vec<&NulStr>> {
         let root = self.get_inode(inode);
+        // traverse the direct pointers and get the data
+        let mut ret = Vec::new();
+        // iterate over all the direct pointers
+        for block in root.direct_pointer.iter() {
+            // <- todo, support large directories
+            // if the pointer is 0, there are no more blocks
+            if *block == 0 {
+                break;
+            }
+            // get the data from the block
+            let data = unsafe {
+                &*(self.blocks[*block as usize - self.block_offset].as_ptr() as *const NulStr)
+            };
+            ret.push(data);
+        }
+        Ok(ret)
     }
 }
 
@@ -243,12 +260,13 @@ fn main() -> Result<()> {
                             let content = ext2.read_file_inode(dir.0);
                             match content {
                                 Ok(content) => {
-                                    println!("{}", content);
+                                    for line in content {
+                                        println!("{}", line);
+                                    }
                                 }
                                 Err(_) => {
                                     println!("cat: {}: No such file or directory", filename);
                                 }
-                                
                             }
                         }
                     }
@@ -257,7 +275,6 @@ fn main() -> Result<()> {
                 if !found {
                     println!("cat: {}: No such file or directory", filename);
                 }
-                println!("cat not yet implemented");
             } else if line.starts_with("rm") {
                 // `rm target`
                 // unlink a file or empty directory
