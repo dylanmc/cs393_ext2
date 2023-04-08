@@ -144,6 +144,7 @@ impl Ext2 {
             }
             // get the data from the block
             let data = unsafe {
+                // this line is stolen from Aria's repo
                 &*(self.blocks[*block as usize - self.block_offset].as_ptr() as *const NulStr)
             };
             ret.push(data);
