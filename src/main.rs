@@ -136,19 +136,32 @@ impl Ext2 {
         // traverse the direct pointers and get the data
         let mut ret = Vec::new();
         // iterate over all the direct pointers
-        for block in root.direct_pointer.iter() {
+        for direct_ptr in root.direct_pointer.iter() {
             // <- todo, support large directories
-            // if the pointer is 0, there are no more blocks
-            if *block == 0 {
+            // if block_num is 0, there are no more blocks -- invalid
+            let block_num = *direct_ptr;
+            if block_num == 0 {
                 break;
             }
             // get the data from the block
             let data = unsafe {
                 // this line is stolen from Aria's repo
-                &*(self.blocks[*block as usize - self.block_offset].as_ptr() as *const NulStr)
+                // direct pointers store block numbers
+                // self.blocks[block_number] gives us the data in bytes
+                self.blocks[block_num as usize - self.block_offset];
             };
             ret.push(data);
         }
+
+        // indirect pointer points to a block full of direct block numbers
+        // let indirect_ptr = root.indirect_pointer;
+        // let block = self.blocks[indirect_ptr];
+        //
+
+        // root.doubly_indirect
+
+        // root.triply_indirect
+
         Ok(ret)
     }
 }
