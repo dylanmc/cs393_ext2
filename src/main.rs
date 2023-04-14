@@ -131,7 +131,7 @@ impl Ext2 {
     }
 
     // given a (1-indexed) inode number, return the contents of that file
-    pub fn read_file_inode(&self, inode: usize) -> std::io::Result<Vec<&NulStr>> {
+    pub fn read_file_inode(&self, inode: usize) -> std::io::Result<Vec<&str>> {
         let root = self.get_inode(inode);
         // traverse the direct pointers and get the data
         let mut ret = Vec::new();
@@ -144,13 +144,14 @@ impl Ext2 {
                 break;
             }
             // get the data from the block
-            let data = unsafe {
-                // this line is stolen from Aria's repo
-                // direct pointers store block numbers
-                // self.blocks[block_number] gives us the data in bytes
-                self.blocks[block_num as usize - self.block_offset];
+            // direct pointers store block numbers
+            // self.blocks[block_number] gives us the data in bytes
+            let data = self.blocks[block_num as usize - self.block_offset];
+            let slice = match std::str::from_utf8(data) {
+                Ok(s) => s,
+                Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
             };
-            ret.push(data);
+            ret.push(slice);
         }
 
         // indirect pointer points to a block full of direct block numbers
@@ -274,8 +275,8 @@ fn main() -> Result<()> {
                             let content = ext2.read_file_inode(dir.0);
                             match content {
                                 Ok(content) => {
-                                    for line in content {
-                                        println!("{}", line);
+                                    for slice in content {
+                                        print!("{}", slice);
                                     }
                                 }
                                 Err(_) => {
