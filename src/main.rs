@@ -231,6 +231,7 @@ fn main() -> Result<()> {
                                 found = true;
                                 current_working_inode = dir.0;
                             } else {
+                                found = true;
                                 println!("cd: not a directory: {}", dir.1);
                             }
                         }
