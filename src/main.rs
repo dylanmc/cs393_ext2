@@ -137,53 +137,102 @@ impl Ext2 {
         let root = self.get_inode(inode);
         // traverse the direct pointers and get the data
         let mut ret = Vec::new();
-        let mut done: bool = false;
         // iterate over all the direct pointers
         for direct_ptr in root.direct_pointer.iter() {
             // <- todo, support large directories
             // if block_num is 0, there are no more blocks -- invalid
             let block_num = *direct_ptr;
             if block_num == 0 {
-                done = true;
-                break;
+                return Ok(ret);
             }
             // get the data from the block
             // direct pointers store block numbers
             // self.blocks[block_number] gives us the data in bytes
             let data = self.blocks[block_num as usize - self.block_offset];
-            ret = [&ret, data].concat(); // ret.extend_from_slice(data);
+            ret.extend_from_slice(data);
         }
 
-        if done == true {
-            return Ok(ret);
-        }
         // indirect pointer points to a block full of direct block numbers
         // block addresses stored in the block are all 32-bit
         let indirect_ptr = root.indirect_pointer;
-        let block = self.blocks[indirect_ptr as usize - self.block_offset];
-        let entry_ptr = block.as_ptr();
+        let indir_block = self.blocks[indirect_ptr as usize - self.block_offset];
+        let entry_ptr = indir_block.as_ptr();
         let mut byte_offset: isize = 0;
         while byte_offset < self.block_size as isize {
-            let block_num = unsafe {&*(entry_ptr.offset(byte_offset) as *const u32)};
-            print!("block_num = {}", block_num);
+            // get direct block number from indirect ptr one at a time
+            let dir_block_num = unsafe { *(entry_ptr.offset(byte_offset) as *const u32) };
+            if dir_block_num == 0 {
+                return Ok(ret);
+            }
+            let data = self.blocks[dir_block_num as usize];
+            ret.extend_from_slice(data);
+            // block is an array of u8, want to read every 4 bytes
             byte_offset += 4;
         }
-        // array of all direct block numbers
-        // let block_numbers = Vec::new();
-        // block is an array of u8, want to read every 4 bytes
-        // for byte in block {
-        //     block_numbers = [&block_numbers, byte].concat();
-        // }
 
-        let blocks_numbers = self.block_size / 4;
-        // get direct block numbers from indirect block somehow
         //
-
-
+        //
+        // currently UNTESTED because not large enough file in myfsplusbeemovie
+        //
+        //
         let doubly_indirect = root.doubly_indirect;
+        // stores a bunch of indirect pointer block numbers
+        let doub_block = self.blocks[doubly_indirect as usize - self.block_offset];
+        let entry_ptr0 = doub_block.as_ptr();
+        let mut byte_offset0: isize = 0;
+        while byte_offset < self.block_size as isize {
+            let indir_block_num = unsafe { *(entry_ptr0.offset(byte_offset0) as *const u32) };
+            if indir_block_num == 0 {
+                return Ok(ret);
+            }
+            let single_indir_block = self.blocks[indir_block_num as usize - self.block_offset];
+            let entry_ptr1 = single_indir_block.as_ptr();
+            let mut byte_offset1: isize = 0;
+            while byte_offset < self.block_size as isize {
+                let dir_block_num = unsafe { *(entry_ptr1.offset(byte_offset1) as *const u32) };
+                if dir_block_num == 0 {
+                    return Ok(ret);
+                }
+                let data = self.blocks[dir_block_num as usize];
+                ret.extend_from_slice(data);
+                byte_offset1 += 4;
+            }
+            byte_offset0 += 4;
+        }
 
         let triply_indirect = root.triply_indirect;
-
+        let triply_indir_block = self.blocks[triply_indirect as usize - self.block_offset];
+        let entry_ptr0 = triply_indir_block.as_ptr();
+        let mut byte_offset0: isize = 0;
+        while byte_offset < self.block_size as isize {
+            let doub_indir_block_num = unsafe { *(entry_ptr0.offset(byte_offset0) as *const u32) };
+            if doub_indir_block_num == 0 {
+                return Ok(ret);
+            }
+            let doub_indir_block = self.blocks[doub_indir_block_num as usize - self.block_offset];
+            let entry_ptr1 = doub_indir_block.as_ptr();
+            let mut byte_offset1: isize = 0;
+            while byte_offset < self.block_size as isize {
+                let indir_block_num = unsafe { *(entry_ptr1.offset(byte_offset1) as *const u32) };
+                if indir_block_num == 0 {
+                    return Ok(ret);
+                }
+                let single_indir_block = self.blocks[indir_block_num as usize - self.block_offset];
+                let entry_ptr2 = single_indir_block.as_ptr();
+                let mut byte_offset2: isize = 0;
+                while byte_offset < self.block_size as isize {
+                    let dir_block_num = unsafe { *(entry_ptr2.offset(byte_offset2) as *const u32) };
+                    if dir_block_num == 0 {
+                        return Ok(ret);
+                    }
+                    let data = self.blocks[dir_block_num as usize];
+                    ret.extend_from_slice(data);
+                    byte_offset2 += 4;
+                }
+                byte_offset1 += 4;
+            }
+            byte_offset0 += 4;
+        }
         Ok(ret)
     }
 }
@@ -204,7 +253,7 @@ impl fmt::Debug for Inode {
 }
 
 fn main() -> Result<()> {
-    let disk = include_bytes!("../myfs.ext2");
+    let disk = include_bytes!("../myfsplusbeemovie.ext2");
     let start_addr: usize = disk.as_ptr() as usize;
     let ext2 = Ext2::new(&disk[..], start_addr);
 
