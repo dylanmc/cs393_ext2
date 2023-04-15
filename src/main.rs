@@ -52,6 +52,7 @@ impl Ext2 {
             .blocks_count
             .div_ceil(superblock.blocks_per_group) as usize;
 
+        // not sure about the unit of block_size, bits or bytes?
         let block_size: usize = 1024 << superblock.log_block_size;
         println!(
             "there are {} block groups and block_size = {}",
@@ -136,29 +137,52 @@ impl Ext2 {
         let root = self.get_inode(inode);
         // traverse the direct pointers and get the data
         let mut ret = Vec::new();
+        let mut done: bool = false;
         // iterate over all the direct pointers
         for direct_ptr in root.direct_pointer.iter() {
             // <- todo, support large directories
             // if block_num is 0, there are no more blocks -- invalid
             let block_num = *direct_ptr;
             if block_num == 0 {
+                done = true;
                 break;
             }
             // get the data from the block
             // direct pointers store block numbers
             // self.blocks[block_number] gives us the data in bytes
             let data = self.blocks[block_num as usize - self.block_offset];
-            ret = [&ret, data].concat();
+            ret = [&ret, data].concat(); // ret.extend_from_slice(data);
         }
 
+        if done == true {
+            return Ok(ret);
+        }
         // indirect pointer points to a block full of direct block numbers
-        // let indirect_ptr = root.indirect_pointer;
-        // let block = self.blocks[indirect_ptr];
+        // block addresses stored in the block are all 32-bit
+        let indirect_ptr = root.indirect_pointer;
+        let block = self.blocks[indirect_ptr as usize - self.block_offset];
+        let entry_ptr = block.as_ptr();
+        let mut byte_offset: isize = 0;
+        while byte_offset < self.block_size as isize {
+            let block_num = unsafe {&*(entry_ptr.offset(byte_offset) as *const u32)};
+            print!("block_num = {}", block_num);
+            byte_offset += 4;
+        }
+        // array of all direct block numbers
+        // let block_numbers = Vec::new();
+        // block is an array of u8, want to read every 4 bytes
+        // for byte in block {
+        //     block_numbers = [&block_numbers, byte].concat();
+        // }
+
+        let blocks_numbers = self.block_size / 4;
+        // get direct block numbers from indirect block somehow
         //
 
-        // root.doubly_indirect
 
-        // root.triply_indirect
+        let doubly_indirect = root.doubly_indirect;
+
+        let triply_indirect = root.triply_indirect;
 
         Ok(ret)
     }
