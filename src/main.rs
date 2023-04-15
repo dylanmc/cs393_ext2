@@ -6,6 +6,7 @@ use null_terminated::Nul;
 use null_terminated::NulStr;
 use rustyline::{DefaultEditor, Result};
 use std::fmt;
+use std::io::{self, Write};
 use std::mem;
 use uuid::Uuid;
 use zerocopy::ByteSlice;
@@ -131,7 +132,7 @@ impl Ext2 {
     }
 
     // given a (1-indexed) inode number, return the contents of that file
-    pub fn read_file_inode(&self, inode: usize) -> std::io::Result<Vec<&str>> {
+    pub fn read_file_inode(&self, inode: usize) -> std::io::Result<Vec<u8>> {
         let root = self.get_inode(inode);
         // traverse the direct pointers and get the data
         let mut ret = Vec::new();
@@ -147,11 +148,7 @@ impl Ext2 {
             // direct pointers store block numbers
             // self.blocks[block_number] gives us the data in bytes
             let data = self.blocks[block_num as usize - self.block_offset];
-            let slice = match std::str::from_utf8(data) {
-                Ok(s) => s,
-                Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
-            };
-            ret.push(slice);
+            ret = [&ret, data].concat();
         }
 
         // indirect pointer points to a block full of direct block numbers
@@ -275,9 +272,7 @@ fn main() -> Result<()> {
                             let content = ext2.read_file_inode(dir.0);
                             match content {
                                 Ok(content) => {
-                                    for slice in content {
-                                        print!("{}", slice);
-                                    }
+                                    io::stdout().write_all(&content).unwrap();
                                 }
                                 Err(_) => {
                                     println!("cat: {}: No such file or directory", filename);
