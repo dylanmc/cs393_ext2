@@ -132,8 +132,72 @@ impl Ext2 {
         Ok(ret)
     }
 
+    // A helper function for `read_file_inode` to read the indirect pointer and return the data as a Vec<u8>
+    fn read_indir_ptr(&self, block_num: usize) -> std::io::Result<Vec<u8>> {
+        // indirect pointer points to a block full of direct block numbers/addresses
+        // block addresses/numbers stored in the block are all 32-bit
+        let indir_block = self.blocks[block_num];
+        // this pointer points to the head of the indirect block
+        let entry_ptr = indir_block.as_ptr();
+        // byte_offset is the offset in bytes from the head of the indirect block, like the index of an array
+        let mut byte_offset: isize = 0;
+        let mut ret = Vec::new();
+        while byte_offset < self.block_size as isize {
+            // get direct block number from indirect ptr one at a time
+            let dir_block_num = unsafe { *(entry_ptr.offset(byte_offset) as *const u32) };
+            if dir_block_num == 0 {
+                return Ok(ret);
+            }
+            let data = self.blocks[dir_block_num as usize];
+            ret.extend_from_slice(data);
+            // block is an array of u8, want to read every 4 bytes
+            byte_offset += 4;
+        }
+        Ok(ret)
+    }
+
+    // A helper function for `read_file_inode` read the doubly indirect pointer and return the data as a Vec<u8>
+    fn read_doubly_ptr(&self, block_num: usize) -> std::io::Result<Vec<u8>> {
+        // stores a bunch of singly indirect pointer block numbers
+        let doub_block = self.blocks[block_num];
+        let entry_ptr = doub_block.as_ptr();
+        let mut byte_offset: isize = 0;
+        let mut ret = Vec::new();
+        while byte_offset < self.block_size as isize {
+            let indir_block_num = unsafe { *(entry_ptr.offset(byte_offset) as *const u32) };
+            if indir_block_num == 0 {
+                return Ok(ret);
+            }
+            let data_from_indir = &(self.read_indir_ptr(indir_block_num as usize))
+                .expect("error reading indirect pointer");
+            ret.extend_from_slice(data_from_indir);
+            byte_offset += 4;
+        }
+        Ok(ret)
+    }
+
+    // A helper function for `read_file_inode` read the triply indirect pointer and return the data as a Vec<u8>
+    fn read_triply_ptr(&self, block_num: usize) -> std::io::Result<Vec<u8>> {
+        let triply_indir_block = self.blocks[block_num];
+        let entry_ptr = triply_indir_block.as_ptr();
+        let mut byte_offset: isize = 0;
+        let mut ret = Vec::new();
+        while byte_offset < self.block_size as isize {
+            let doub_indir_block_num = unsafe { *(entry_ptr.offset(byte_offset) as *const u32) };
+            if doub_indir_block_num == 0 {
+                return Ok(ret);
+            }
+            let data_from_doubly = &(self.read_doubly_ptr(doub_indir_block_num as usize))
+                .expect("error reading doubly indirect pointer");
+            ret.extend_from_slice(data_from_doubly);
+            byte_offset += 4;
+        }
+        Ok(ret)
+    }
+
     // given a (1-indexed) inode number, return the contents of that file
     pub fn read_file_inode(&self, inode: usize) -> std::io::Result<Vec<u8>> {
+        // root is the inode we want to read
         let root = self.get_inode(inode);
         // traverse the direct pointers and get the data
         let mut ret = Vec::new();
@@ -152,87 +216,33 @@ impl Ext2 {
             ret.extend_from_slice(data);
         }
 
-        // indirect pointer points to a block full of direct block numbers
-        // block addresses stored in the block are all 32-bit
+        // read indirect pointer
         let indirect_ptr = root.indirect_pointer;
-        let indir_block = self.blocks[indirect_ptr as usize - self.block_offset];
-        let entry_ptr = indir_block.as_ptr();
-        let mut byte_offset: isize = 0;
-        while byte_offset < self.block_size as isize {
-            // get direct block number from indirect ptr one at a time
-            let dir_block_num = unsafe { *(entry_ptr.offset(byte_offset) as *const u32) };
-            if dir_block_num == 0 {
-                return Ok(ret);
-            }
-            let data = self.blocks[dir_block_num as usize];
-            ret.extend_from_slice(data);
-            // block is an array of u8, want to read every 4 bytes
-            byte_offset += 4;
+        if indirect_ptr == 0 {
+            return Ok(ret);
         }
+        let indir_block_num = indirect_ptr as usize - self.block_offset;
+        let data = self.read_indir_ptr(indir_block_num).expect("error reading indirect pointer");
+        ret.extend_from_slice(&data);
+        
+        // read doubly indirect pointer
+        let doub_indir_ptr = root.doubly_indirect;
+        if doub_indir_ptr == 0 {
+            return Ok(ret);
+        }
+        let doub_block_num = doub_indir_ptr as usize - self.block_offset;
+        let data = self.read_doubly_ptr(doub_block_num).expect("error reading doubly indirect pointer");
+        ret.extend_from_slice(&data);
 
-        //
-        //
-        // currently UNTESTED because not large enough file in myfsplusbeemovie
-        //
-        //
-        let doubly_indirect = root.doubly_indirect;
-        // stores a bunch of indirect pointer block numbers
-        let doub_block = self.blocks[doubly_indirect as usize - self.block_offset];
-        let entry_ptr0 = doub_block.as_ptr();
-        let mut byte_offset0: isize = 0;
-        while byte_offset < self.block_size as isize {
-            let indir_block_num = unsafe { *(entry_ptr0.offset(byte_offset0) as *const u32) };
-            if indir_block_num == 0 {
-                return Ok(ret);
-            }
-            let single_indir_block = self.blocks[indir_block_num as usize - self.block_offset];
-            let entry_ptr1 = single_indir_block.as_ptr();
-            let mut byte_offset1: isize = 0;
-            while byte_offset < self.block_size as isize {
-                let dir_block_num = unsafe { *(entry_ptr1.offset(byte_offset1) as *const u32) };
-                if dir_block_num == 0 {
-                    return Ok(ret);
-                }
-                let data = self.blocks[dir_block_num as usize];
-                ret.extend_from_slice(data);
-                byte_offset1 += 4;
-            }
-            byte_offset0 += 4;
+        // read triply indirect pointer
+        let triply_indir_ptr = root.triply_indirect;
+        if triply_indir_ptr == 0 {
+            return Ok(ret);
         }
-
-        let triply_indirect = root.triply_indirect;
-        let triply_indir_block = self.blocks[triply_indirect as usize - self.block_offset];
-        let entry_ptr0 = triply_indir_block.as_ptr();
-        let mut byte_offset0: isize = 0;
-        while byte_offset < self.block_size as isize {
-            let doub_indir_block_num = unsafe { *(entry_ptr0.offset(byte_offset0) as *const u32) };
-            if doub_indir_block_num == 0 {
-                return Ok(ret);
-            }
-            let doub_indir_block = self.blocks[doub_indir_block_num as usize - self.block_offset];
-            let entry_ptr1 = doub_indir_block.as_ptr();
-            let mut byte_offset1: isize = 0;
-            while byte_offset < self.block_size as isize {
-                let indir_block_num = unsafe { *(entry_ptr1.offset(byte_offset1) as *const u32) };
-                if indir_block_num == 0 {
-                    return Ok(ret);
-                }
-                let single_indir_block = self.blocks[indir_block_num as usize - self.block_offset];
-                let entry_ptr2 = single_indir_block.as_ptr();
-                let mut byte_offset2: isize = 0;
-                while byte_offset < self.block_size as isize {
-                    let dir_block_num = unsafe { *(entry_ptr2.offset(byte_offset2) as *const u32) };
-                    if dir_block_num == 0 {
-                        return Ok(ret);
-                    }
-                    let data = self.blocks[dir_block_num as usize];
-                    ret.extend_from_slice(data);
-                    byte_offset2 += 4;
-                }
-                byte_offset1 += 4;
-            }
-            byte_offset0 += 4;
-        }
+        let triply_block_num = triply_indir_ptr as usize - self.block_offset;
+        let data = self.read_triply_ptr(triply_block_num).expect("error reading triply indirect pointer");
+        ret.extend_from_slice(&data);
+        
         Ok(ret)
     }
 }
