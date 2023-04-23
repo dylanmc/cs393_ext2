@@ -113,27 +113,144 @@ impl Ext2 {
         &inode_table[index]
     }
 
-    // given a (1-indexed) inode number, return a list of (inode, name) pairs
-    pub fn read_dir_inode(&self, inode: usize) -> std::io::Result<Vec<(usize, &NulStr)>> {
-        let mut ret = Vec::new();
-        let root = self.get_inode(inode);
-        // println!("in read_dir_inode, #{} : {:?}", inode, root);
-        // println!("following direct pointer to data block: {}", root.direct_pointer[0]);
-        // entry_ptr is a pointer to the first entry in the directory
-        let entry_ptr = self.blocks[root.direct_pointer[0] as usize - self.block_offset].as_ptr();
+    // A helper function for `read_dir_inode` to read  direct pointers and return the data as a Vec<u8>
+    fn read_dir_indir_ptr(&self, block_num: usize) -> std::io::Result<Vec<(usize, &NulStr)>> {
+        // indirect pointer points to a block full of direct block numbers/addresses
+        // block addresses/numbers stored in the block are all 32-bit
+        let indir_block = self.blocks[block_num];
+        // this pointer points to the head of the indirect block
+        let entry_ptr = indir_block.as_ptr();
+        // byte_offset is the offset in bytes from the head of the indirect block, like the index of an array
         let mut byte_offset: isize = 0;
-        while byte_offset < root.size_low as isize {
-            // <- todo, support large directories
+        let mut ret = Vec::new();
+        while byte_offset < self.block_size as isize {
+            // get direct block number from indirect ptr one at a time
             let directory = unsafe { &*(entry_ptr.offset(byte_offset) as *const DirectoryEntry) };
-            // println!("{:?}", directory);
-            byte_offset += directory.entry_size as isize;
+            // if the inode number is 0, then the entry is empty
+            if directory.inode == 0 {
+                // println!("inode num: {}", directory.inode_num);
+                // println!("name: {}", directory.name);
+                return Ok(ret);
+            }
             ret.push((directory.inode as usize, &directory.name));
+            // move the byte_offset to the next entry
+            byte_offset += directory.entry_size as isize;
         }
         Ok(ret)
     }
 
+    // A helper function for `read_dir_inode` read the doubly indirect pointer and return the data as a Vec<u8>
+    fn read_dir_doubly_ptr(&self, block_num: usize) -> std::io::Result<Vec<(usize, &NulStr)>> {
+        // stores a bunch of singly indirect pointer block numbers
+        let doub_block = self.blocks[block_num];
+        let entry_ptr = doub_block.as_ptr();
+        let mut byte_offset: isize = 0;
+        let mut ret = Vec::new();
+        while byte_offset < self.block_size as isize {
+            let directory = unsafe { &*(entry_ptr.offset(byte_offset) as *const DirectoryEntry) };
+            if directory.inode == 0 {
+                return Ok(ret);
+            }
+            let data_from_indir = &(self.read_dir_indir_ptr(directory.inode as usize))
+                .expect("error reading indirect pointer");
+            ret.extend_from_slice(data_from_indir);
+            byte_offset += directory.entry_size as isize;
+        }
+        Ok(ret)
+    }
+
+    // A helper function for `read_file_inode` read the triply indirect pointer and return the data as a Vec<u8>
+    fn read_dir_triply_ptr(&self, block_num: usize) -> std::io::Result<Vec<(usize, &NulStr)>> {
+        let triply_indir_block = self.blocks[block_num];
+        let entry_ptr = triply_indir_block.as_ptr();
+        let mut byte_offset: isize = 0;
+        let mut ret = Vec::new();
+        while byte_offset < self.block_size as isize {
+            let directory = unsafe { &*(entry_ptr.offset(byte_offset) as *const DirectoryEntry) };
+            if directory.inode == 0 {
+                return Ok(ret);
+            }
+            let data_from_doubly = &(self.read_dir_doubly_ptr(directory.inode as usize))
+                .expect("error reading doubly indirect pointer");
+            ret.extend_from_slice(data_from_doubly);
+            byte_offset += directory.entry_size as isize;
+        }
+        Ok(ret)
+    }
+
+    // given a (1-indexed) inode number, return a list of (inode, name) pairs
+    pub fn read_dir_inode(&self, inode: usize) -> std::io::Result<Vec<(usize, &NulStr)>> {
+        let mut ret = Vec::new();
+        // root is the inode of the directory we're reading
+        let root = self.get_inode(inode);
+        // println!("in read_dir_inode, #{} : {:?}", inode, root);
+        // println!("following direct pointer to data block: {}", root.direct_pointer[0]);
+        // entry_ptr is a pointer to the first entry in the directory
+
+        // iterate over all the direct pointers
+        for direct_ptr in root.direct_pointer.iter() {
+            // <- todo, support large directories
+            // if block_num is 0, there are no more blocks -- invalid
+            let block_num = *direct_ptr;
+            if block_num == 0 {
+                return Ok(ret);
+            }
+            // get the pointer to the first entry in the directory
+            let entry_ptr = self.blocks[block_num as usize - self.block_offset].as_ptr();
+            // byte_offset is the offset from the start of the directory to the current entry
+            let mut byte_offset: isize = 0;
+            while byte_offset < self.block_size as isize {
+                // <- todo, support large directories
+                let directory =
+                    unsafe { &*(entry_ptr.offset(byte_offset) as *const DirectoryEntry) };
+                // if the directory is empty, we're done
+                if directory.inode == 0 {
+                    return Ok(ret);
+                }
+                // println!("{:?}", directory);
+                byte_offset += directory.entry_size as isize;
+                ret.push((directory.inode as usize, &directory.name));
+            }
+        }
+
+        // read indirect pointer
+        let indirect_ptr = root.indirect_pointer;
+        if indirect_ptr == 0 {
+            return Ok(ret);
+        }
+        let indir_block_num = indirect_ptr as usize - self.block_offset;
+        let data = self
+            .read_dir_indir_ptr(indir_block_num)
+            .expect("error reading indirect pointer");
+        ret.extend_from_slice(&data);
+
+        // read doubly indirect pointer
+        let doub_indir_ptr = root.doubly_indirect;
+        if doub_indir_ptr == 0 {
+            return Ok(ret);
+        }
+        let doub_block_num = doub_indir_ptr as usize - self.block_offset;
+        let data = self
+            .read_dir_doubly_ptr(doub_block_num)
+            .expect("error reading doubly indirect pointer");
+        ret.extend_from_slice(&data);
+
+        // read triply indirect pointer
+        let triply_indir_ptr = root.triply_indirect;
+        if triply_indir_ptr == 0 {
+            return Ok(ret);
+        }
+        let triply_block_num = triply_indir_ptr as usize - self.block_offset;
+        let data = self
+            .read_dir_triply_ptr(triply_block_num)
+            .expect("error reading triply indirect pointer");
+        ret.extend_from_slice(&data);
+
+        Ok(ret)
+    }
+
     // A helper function for `read_file_inode` to read the indirect pointer and return the data as a Vec<u8>
-    fn read_indir_ptr(&self, block_num: usize) -> std::io::Result<Vec<u8>> {
+    fn read_file_indir_ptr(&self, block_num: usize) -> std::io::Result<Vec<u8>> {
         // indirect pointer points to a block full of direct block numbers/addresses
         // block addresses/numbers stored in the block are all 32-bit
         let indir_block = self.blocks[block_num];
@@ -157,7 +274,7 @@ impl Ext2 {
     }
 
     // A helper function for `read_file_inode` read the doubly indirect pointer and return the data as a Vec<u8>
-    fn read_doubly_ptr(&self, block_num: usize) -> std::io::Result<Vec<u8>> {
+    fn read_file_doubly_ptr(&self, block_num: usize) -> std::io::Result<Vec<u8>> {
         // stores a bunch of singly indirect pointer block numbers
         let doub_block = self.blocks[block_num];
         let entry_ptr = doub_block.as_ptr();
@@ -168,7 +285,7 @@ impl Ext2 {
             if indir_block_num == 0 {
                 return Ok(ret);
             }
-            let data_from_indir = &(self.read_indir_ptr(indir_block_num as usize))
+            let data_from_indir = &(self.read_file_indir_ptr(indir_block_num as usize))
                 .expect("error reading indirect pointer");
             ret.extend_from_slice(data_from_indir);
             byte_offset += 4;
@@ -177,7 +294,7 @@ impl Ext2 {
     }
 
     // A helper function for `read_file_inode` read the triply indirect pointer and return the data as a Vec<u8>
-    fn read_triply_ptr(&self, block_num: usize) -> std::io::Result<Vec<u8>> {
+    fn read_file_triply_ptr(&self, block_num: usize) -> std::io::Result<Vec<u8>> {
         let triply_indir_block = self.blocks[block_num];
         let entry_ptr = triply_indir_block.as_ptr();
         let mut byte_offset: isize = 0;
@@ -187,7 +304,7 @@ impl Ext2 {
             if doub_indir_block_num == 0 {
                 return Ok(ret);
             }
-            let data_from_doubly = &(self.read_doubly_ptr(doub_indir_block_num as usize))
+            let data_from_doubly = &(self.read_file_doubly_ptr(doub_indir_block_num as usize))
                 .expect("error reading doubly indirect pointer");
             ret.extend_from_slice(data_from_doubly);
             byte_offset += 4;
@@ -222,16 +339,20 @@ impl Ext2 {
             return Ok(ret);
         }
         let indir_block_num = indirect_ptr as usize - self.block_offset;
-        let data = self.read_indir_ptr(indir_block_num).expect("error reading indirect pointer");
+        let data = self
+            .read_file_indir_ptr(indir_block_num)
+            .expect("error reading indirect pointer");
         ret.extend_from_slice(&data);
-        
+
         // read doubly indirect pointer
         let doub_indir_ptr = root.doubly_indirect;
         if doub_indir_ptr == 0 {
             return Ok(ret);
         }
         let doub_block_num = doub_indir_ptr as usize - self.block_offset;
-        let data = self.read_doubly_ptr(doub_block_num).expect("error reading doubly indirect pointer");
+        let data = self
+            .read_file_doubly_ptr(doub_block_num)
+            .expect("error reading doubly indirect pointer");
         ret.extend_from_slice(&data);
 
         // read triply indirect pointer
@@ -240,9 +361,11 @@ impl Ext2 {
             return Ok(ret);
         }
         let triply_block_num = triply_indir_ptr as usize - self.block_offset;
-        let data = self.read_triply_ptr(triply_block_num).expect("error reading triply indirect pointer");
+        let data = self
+            .read_file_triply_ptr(triply_block_num)
+            .expect("error reading triply indirect pointer");
         ret.extend_from_slice(&data);
-        
+
         Ok(ret)
     }
 }
